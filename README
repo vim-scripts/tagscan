@@ -1,0 +1,32 @@
+This is a mirror of http://www.vim.org/scripts/script.php?script_id=1791
+
+[ This script is obsolete. Please use http://www.vim.org/scripts/script.php?script_id=2507 instead ]
+
+If you've file with lines
+
+header: creation of form with scroll
+     tags: create, gui
+ --- some info
+--- some .sco links
+ --- some info
+header: creation of speed buttons
+     tags: gui, create
+ --- some info
+ --- some info
+// tags: todo, bug
+void function_bug( bug_height )
+{
+}
+
+You can type command
+:ScanTags
+  and do fast find by tags lines you want
+
+:Select   command do add tag to list ( <CR> key )
+:Deselect command remove last tag from list ( <BS> key )
+
+any letter keys to quick move to tag ( s o r t -  show only tags than consist "sort" as their part)
+<Tab> key to move to next visible tag
+
+Script written for easy search information in  files (.sco files for example http://www.vim.org/scripts/script.php?script_id=1638 )
+
