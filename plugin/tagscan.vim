@@ -13,7 +13,11 @@
 "  :ScanTags
 "  and do fast find by tags lines you want
 "  :Select   command do add tag to list ( <CR> key )
-"  :Deselect command remove last tag from list ( x key )
+"  :Deselect command remove last tag from list ( <BS> key )
+"
+"  Just start to type tag name you need and you'll automatically move to
+"  correct place, then push <CR>
+"  Use <Esc> to start type from begin
 "
 "  Script written for easy find information in tagged files (.sco files for
 "  example)
@@ -41,7 +45,7 @@ function! s:GatherAllTags()
     let search_flags = 'cW'
 
     while line_number > 0
-        let line_number = search( '^tags:', search_flags )
+        let line_number = search( 'tags:', search_flags )
 
         if 0 == line_number
             break
@@ -51,7 +55,17 @@ function! s:GatherAllTags()
         let search_flags = 'W'
 
         let tags = s:ReturnTags( line )
+
         let additional_tag = "#".line_number
+
+        if line_number > 1
+            let header_line = getline ( line_number - 1)
+            let header = substitute( header_line, 'header:\s*\(.*\)', '\1', '')
+            if header != ""
+                let additional_tag = "#:".header
+            endif
+        endif
+
         call add(tags, additional_tag)
         call add(result, [line_number, sort(tags)] )
     endwhile
@@ -123,11 +137,11 @@ function! s:SelectTag( tag_name )
 endfunction
 
 function! s:IsSelectedTagsLine( line_number )
-    return a:line_number == 2
+    return a:line_number == 3
 endfunction
 
 function! s:IsInformationArea( line_number )
-    if a:line_number == 1 || a:line_number == 2
+    if a:line_number < 4 
         return 1
     endif
 
@@ -146,6 +160,7 @@ function! s:HandleMatches()
 endfunction
 
 function! s:SelectTagUnderCursor()
+    let b:last_typed_chars = ""
     let line_number = line('.')
 
     if b:matches && s:IsSelectedTagsLine(line_number)
@@ -171,6 +186,10 @@ function! s:SelectTagUnderCursor()
 
     if len(b:list_to_select) == 1 && ! b:matches
         call s:SelectTag(b:list_to_select[0])
+    endif
+
+    if len(b:list_to_select) == 0 && b:matches
+        call s:JumpToResult( b:matches_line_number )
     endif
 
 endfunction
@@ -228,17 +247,19 @@ endfunction
 function! s:CheckTagMatches()
     let selected = sort(b:selected_tags)
     for tag_list in b:allTags
-        if selected == tag_list[1][1:-1]
+        if selected == tag_list[1][1:-1] || selected == tag_list[1][0:-1]
             let b:matches_line_number = tag_list[0]
             return 1
         endif
     endfor
+
     return 0
 endfunction
 
 function! s:AddTagsToBuffer( tags )
     setlocal modifiable
 
+    call s:MapQuickSearch()
     let unique = s:BuildUniqueTagList( a:tags )
 
     let unique = sort(unique)
@@ -261,6 +282,7 @@ function! s:AddTagsToBuffer( tags )
     endfor
 
     if added_count == 0
+        call s:UnmapQuickSearch()
         for item in unique
             if s:IsInList( b:selected_tags, item)
                 continue
@@ -272,6 +294,8 @@ function! s:AddTagsToBuffer( tags )
                 continue
             endif
         endfor
+    else
+        "call s:MapQuickSearch()
     endif
 
     exec line_number+1."d"
@@ -287,6 +311,7 @@ function! s:AddHeaderInfo()
     endfor
 
     call append(0, "selected tags: ".selected_tags_prompt)
+    call append(0, "typed tag: ")
     call append(0, "source: ".b:source_name)
 
     setlocal nomodifiable
@@ -296,11 +321,59 @@ function! s:RefreshSelectWindow()
     call s:ClearBuffer()
     call s:AddTagsToBuffer( b:lastTags )
     call s:AddHeaderInfo()
+    exec ":4"
+endfunction
+
+function! s:TypedTagRefresh()
+    set modifiable
+    let text = "typed tag: ".b:last_typed_chars
+    call setline(2, text)
+    set nomodifiable
+endfunction
+
+function! s:MoveToClear()
+    let b:last_typed_chars = ""
+    call s:TypedTagRefresh()
+endfunction
+
+function! s:MoveToPlus( char )
+    let b:last_typed_chars .= a:char
+
     exec ":3"
+
+    let search_flags = 'cW'
+    let line_number = search( '^'.b:last_typed_chars, search_flags )
+
+    if line_number
+        exec ":".line_number
+    endif
+
+    call s:TypedTagRefresh()
+endfunction
+
+let s:alphabet = "q w e r t y u i o p a s d f g h j k l z x c v b n m _ 1 2 3 4 5 6 7 8 9 0 "
+let s:alphabet_list = split(s:alphabet, " ")
+
+function! s:MapQuickSearch()
+    for letter in s:alphabet_list
+        let map_command = "nnoremap <buffer> ".letter." :MoveToPlus '".letter."' <CR>" 
+        exec map_command
+    endfor
+
+    nnoremap <buffer> <Esc> :MoveToClear<CR>
+endfunction
+
+function! s:UnmapQuickSearch()
+    for letter in s:alphabet_list
+        let map_command = "nunmap <buffer> ".letter
+        exec map_command
+    endfor
+
+    nunmap <buffer> <Esc>
 endfunction
 
 function! s:CreateBufferWindowAndSetup( name )
-    exec "split _FIND_BY_TAGS_".a:name
+    exec "split _FIND_BY_TAGS_"
 
     setlocal noswapfile
     setlocal buftype=nofile
@@ -308,18 +381,29 @@ function! s:CreateBufferWindowAndSetup( name )
 
     syn match tags_scan_source /^source:/ nextgroup=tags_scan_source_info
     syn match tags_scan_selected /^selected tags:/ nextgroup=tags_scan_selected_info
+    syn match tags_typed_tag /^typed tag:/ nextgroup=tags_typed_tag_info
     syn match tags_scan_source_info /.*/ contained
     syn match tags_scan_selected_info /.*/ contained
+    syn match tags_typed_tag_info /.*/ contained
+
     hi link tags_scan_source            Define
     hi link tags_scan_source_info       Comment
+
+    hi link tags_typed_tag              Statement
+    hi link tags_typed_tag_info         String
 
     call s:HighlihgtTagsNormal()
 
     command! -buffer Select call <SID>SelectTagUnderCursor()
     command! -buffer Deselect call <SID>DeselectLastTag()
+    command! -buffer -nargs=1 MoveToPlus call <SID>MoveToPlus(<args>)
+    command! -buffer MoveToClear call <SID>MoveToClear()
 
-    nnoremap <buffer> x :Deselect<CR>
+    nnoremap <BS> :Deselect<CR>
     nnoremap <buffer> <CR> :Select<CR>
+
+    let b:last_typed_chars = ""
+    call s:MapQuickSearch()
 endfunction
 
 function! s:ShowSelectWindow( allTags )
