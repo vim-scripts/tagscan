@@ -31,10 +31,12 @@ endif
 let g:tag_scan_plugin = 1
 
 function! s:ReturnTags( string )
-    let string = substitute( a:string, 'tags:\(.*\)', '\1', '')
+    let string = substitute( a:string, '.*tags:\(.*\)', '\1', '')
     return split(string,'\W\+')
 endfunction
 
+" header: generate tags list
+" tags: tags, generate
 function! s:GatherAllTags()
     let current_line_number = line('.')
     exec ':1'
@@ -62,7 +64,7 @@ function! s:GatherAllTags()
             let header_line = getline ( line_number - 1)
             let header = substitute( header_line, 'header:\s*\(.*\)', '\1', '')
             if header != ""
-                let additional_tag = "#:".header
+                let additional_tag = "# ".header
             endif
         endif
 
@@ -159,6 +161,40 @@ function! s:HandleMatches()
     endif
 endfunction
 
+function! s:HandleCommitSelection()
+    let b:last_typed_chars = ""
+
+    if len(b:list_to_select) == 0 && b:matches
+        call s:JumpToResult( b:matches_line_number )
+        return
+    endif
+
+    if len (b:list_to_select) == 0
+        return
+    endif
+
+    let tag = b:list_to_select[ b:condidate_tag_number ]
+
+    let line_number = line('.')
+    if b:show_in_different_line && ! s:IsInformationArea(line_number)
+        let tag = getline(line_number)
+    endif
+
+    if s:SelectTag( tag )
+        return
+    endif
+
+    call s:HandleMatches()
+
+    if len(b:list_to_select) == 1 && ! b:matches
+        call s:SelectTag(b:list_to_select[0])
+    endif
+
+
+    let b:condidate_tag_number = 0
+    call s:ChangeSelectedWord()
+endfunction
+
 function! s:SelectTagUnderCursor()
     let b:last_typed_chars = ""
     let line_number = line('.')
@@ -212,6 +248,7 @@ function! s:DeselectLastTag()
     call s:DeselectTag( tag )
 
     call s:HandleMatches()
+    call s:ChangeSelectedWord()
 endfunction
 
 function! s:DeselectTag( tag_name )
@@ -256,17 +293,17 @@ function! s:CheckTagMatches()
     return 0
 endfunction
 
-function! s:AddTagsToBuffer( tags )
-    setlocal modifiable
-
+" header: function to return all tags that should be visible
+" tags: calculate, tags
+function! s:CalculateVisibleTags( tags, tag_part )
     call s:MapQuickSearch()
     let unique = s:BuildUniqueTagList( a:tags )
 
     let unique = sort(unique)
-    let line_number = 0
-
     let added_count = 0
+
     let b:list_to_select = []
+    let b:show_in_different_line = 0
     for item in unique
         if s:IsInList( b:selected_tags, item)
             continue
@@ -275,30 +312,48 @@ function! s:AddTagsToBuffer( tags )
             continue
         endif
 
-        call append( line_number, item ) 
-        call add(b:list_to_select, item)
-        let line_number += 1
+        if item =~ a:tag_part
+            call add(b:list_to_select, item)
+        endif
+
         let added_count += 1
     endfor
 
     if added_count == 0
         call s:UnmapQuickSearch()
+        let b:show_in_different_line = 1
         for item in unique
             if s:IsInList( b:selected_tags, item)
                 continue
             endif
             if item =~ '^#'
-                call append( line_number, item ) 
                 call add(b:list_to_select, item)
-                let line_number += 1
                 continue
             endif
         endfor
-    else
-        "call s:MapQuickSearch()
     endif
 
-    exec line_number+1."d"
+    setlocal nomodifiable
+endfunction
+
+" header: show tags in buffer
+" tags: show, tags
+function! s:AddTagsToBuffer()
+    setlocal modifiable
+
+
+    if b:show_in_different_line 
+        exec ":4d"
+        call append(3, b:list_to_select)
+    else
+        let tags_string = ">>> "
+        for item in  b:list_to_select
+            let tags_string .= item.' '
+        endfor
+
+        call setline(4, tags_string)
+    endif
+
     setlocal nomodifiable
 endfunction
 
@@ -311,7 +366,7 @@ function! s:AddHeaderInfo()
     endfor
 
     call append(0, "selected tags: ".selected_tags_prompt)
-    call append(0, "typed tag: ")
+    call append(0, "typed tag part: ")
     call append(0, "source: ".b:source_name)
 
     setlocal nomodifiable
@@ -319,21 +374,29 @@ endfunction
 
 function! s:RefreshSelectWindow()
     call s:ClearBuffer()
-    call s:AddTagsToBuffer( b:lastTags )
+    call s:CalculateVisibleTags(b:lastTags, "")
     call s:AddHeaderInfo()
+    call s:AddTagsToBuffer()
     exec ":4"
 endfunction
 
 function! s:TypedTagRefresh()
     set modifiable
-    let text = "typed tag: ".b:last_typed_chars
+    let text = "typed tag part: ".b:last_typed_chars
     call setline(2, text)
     set nomodifiable
+endfunction
+
+function! s:TagToSelectRefresh()
+    call s:CalculateVisibleTags( b:lastTags, b:last_typed_chars )
+    call s:AddTagsToBuffer()
+    call s:ChangeSelectedWord()
 endfunction
 
 function! s:MoveToClear()
     let b:last_typed_chars = ""
     call s:TypedTagRefresh()
+    call s:TagToSelectRefresh()
 endfunction
 
 function! s:MoveToPlus( char )
@@ -349,6 +412,7 @@ function! s:MoveToPlus( char )
     endif
 
     call s:TypedTagRefresh()
+    call s:TagToSelectRefresh()
 endfunction
 
 let s:alphabet = "q w e r t y u i o p a s d f g h j k l z x c v b n m _ 1 2 3 4 5 6 7 8 9 0 "
@@ -372,16 +436,40 @@ function! s:UnmapQuickSearch()
     nunmap <buffer> <Esc>
 endfunction
 
+function! s:ChangeSelectedWord()
+    if len( b:list_to_select ) == 0
+        return
+    endif
+
+    if b:condidate_tag_number >= len (b:list_to_select)
+        let b:condidate_tag_number = 0
+    endif
+    exec "syn clear tags_word_to_select_word"
+    exec "syn keyword tags_word_to_select_word contained ".b:list_to_select[ b:condidate_tag_number ]
+endfunction
+
+function! s:SelectNextTag()
+    let b:condidate_tag_number += 1
+    call s:TagToSelectRefresh()
+endfunction
+
+" header: buffer setup
+" tags: buffer, setup
 function! s:CreateBufferWindowAndSetup( name )
     exec "split _FIND_BY_TAGS_"
 
     setlocal noswapfile
     setlocal buftype=nofile
     setlocal bufhidden=delete
+    setlocal wrap
+    setlocal linebreak
+    setlocal nonu
+
+    syn region tags_word_to_select_begin start="^>>>" end="$" keepend contains=tags_word_to_select_word
 
     syn match tags_scan_source /^source:/ nextgroup=tags_scan_source_info
     syn match tags_scan_selected /^selected tags:/ nextgroup=tags_scan_selected_info
-    syn match tags_typed_tag /^typed tag:/ nextgroup=tags_typed_tag_info
+    syn match tags_typed_tag /^typed tag part:/ nextgroup=tags_typed_tag_info
     syn match tags_scan_source_info /.*/ contained
     syn match tags_scan_selected_info /.*/ contained
     syn match tags_typed_tag_info /.*/ contained
@@ -392,15 +480,22 @@ function! s:CreateBufferWindowAndSetup( name )
     hi link tags_typed_tag              Statement
     hi link tags_typed_tag_info         String
 
+    hi link tags_word_to_select_begin   Comment
+    hi link tags_word_to_select_word    Todo
+
+
     call s:HighlihgtTagsNormal()
 
-    command! -buffer Select call <SID>SelectTagUnderCursor()
+    command! -buffer Select call <SID>HandleCommitSelection()
+    command! -buffer Select call <SID>HandleCommitSelection()
     command! -buffer Deselect call <SID>DeselectLastTag()
     command! -buffer -nargs=1 MoveToPlus call <SID>MoveToPlus(<args>)
     command! -buffer MoveToClear call <SID>MoveToClear()
+    command! -buffer NextTag call <SID>SelectNextTag()
 
-    nnoremap <BS> :Deselect<CR>
+    nnoremap <buffer> <BS> :Deselect<CR>
     nnoremap <buffer> <CR> :Select<CR>
+    nnoremap <buffer> <Tab> :NextTag<CR>
 
     let b:last_typed_chars = ""
     call s:MapQuickSearch()
@@ -418,6 +513,7 @@ function! s:ShowSelectWindow( allTags )
     let b:lastTags = copy (b:allTags)
     let b:matches = 0
     let b:matches_line_number = 1
+    let b:condidate_tag_number = 0
 
     call s:RefreshSelectWindow()
 endfunction
